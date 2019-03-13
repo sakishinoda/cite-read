@@ -1,6 +1,15 @@
 # How to handle bibliography? BBL, BIB, in-line?
+import re
+import itertools
+from termcolor import colored
+from functools import reduce
 from TexSoup import TexSoup
 from collections import OrderedDict, Counter, defaultdict
+from nltk.tokenize import sent_tokenize
+
+def purge_comments(text):
+    comments = re.findall('%.*\\n', text)
+    return reduce(lambda s, c: s.replace(c, ''), [text] + comments)
 
 def partition_sections(soup, cmd='section'):
     cmds = [el for el in soup.descendants if hasattr(el, 'name') and el.name == cmd]
@@ -27,28 +36,49 @@ def citations_and_contexts(soup):
 
 def parse_document(tex_soup, bib_dict):
     sections = partition_sections(tex_soup, 'section')
+
     for section_title, section_text in sections:
-        section_text_ = section_text.replace('citep', 'cite')
-        cites_ = partition_sections(TexSoup(section_text_), 'cite')
+        purged_section_text = purge_comments(section_text.replace('citep', 'cite'))
+        section_sents = itertools.chain(*[s.split('\n') for s in sent_tokenize(purged_section_text)])
         cites = defaultdict(list)
-        for cite_command, cite_context in cites_:
-            split_commands = [c.strip() for c in cite_command.string.split(',')]
-            for cmd in split_commands:
-                cites[cmd].append(cite_context[:100])
+        for sent in section_sents:
+            if sent.find('cite') < 0:
+                continue
+            try:
+                sent_soup = TexSoup(sent)
+            except Exception as e:
+                if isinstance(e, EOFError):
+                    i = 1
+                    while True:
+                        try:
+                            sent_soup = TexSoup(sent[:-i])
+                        except Exception as e:
+                            i += 1
+                            continue
+                        break
+                elif isinstance(e, TypeError):
+                    import IPython; IPython.embed()
+                    continue
+
+            cites_in_sent = [el for el in sent_soup.descendants if hasattr(el, 'name') and el.name == 'cite']
+            for cite_command in cites_in_sent:
+                for c in cite_command.string.split(','):
+                    cites[c.strip()].append(str(sent_soup))
 
         cite_counts = {k: len(v) for k, v in cites.items()}
-        print('In section "{}", found:'.format(section_title.string))
+        print(colored('In section "{}", found:'.format(section_title.string), 'white', 'on_cyan'))
 
         for k, v in reversed(sorted(cite_counts.items(), key=lambda x: x[1])):
-            print('-> Found {} time(s)'.format(v))
-            print(bib_dict.get(k, 'Not found: {}'.format(k)))
+            print('')
+            print(colored('-> Found {} time(s)'.format(v), 'magenta'))
+            print(colored(bib_dict.get(k, 'Not found: {}'.format(k)), 'white', 'on_yellow'))
             for context in cites[k]:
-                print('-->', context)
+                print('-->', colored(context, 'green'))
         print('-' * 80)
 
 def parse_bib(tex_soup):
     bibitems = partition_sections(tex_soup, 'bibitem')
-    return {b[0].args[-1]: b[1] for b in bibitems}
+    return {b[0].args[-1]: b[1].strip() for b in bibitems}
 
 if __name__ == '__main__':
     import argparse
