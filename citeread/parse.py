@@ -1,7 +1,12 @@
 # How to handle bibliography? BBL, BIB, in-line?
 import sys
+import os
 import re
+import glob
 import itertools
+import argparse
+import json
+from jinja2 import Template
 from termcolor import colored
 from functools import reduce
 from TexSoup import TexSoup
@@ -115,36 +120,66 @@ def parse_bib(tex_soup):
     bibitems = partition_on_command(tex_soup, 'bibitem')
     return {b[0].args[-1]: b[1].strip() for b in bibitems}
 
-def main():
-    import argparse
-    import json
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('tex')
-    parser.add_argument('bib')
-
-    args = parser.parse_args()
-
-    with open(args.tex, 'r') as f:
-        tex = TexSoup(f.read())
-
-    with open(args.bib, 'r') as f:
+def bib_from_bbl(bbl_file):
+    with open(bbl_file, 'r') as f:
         bib = TexSoup(map(str, TexSoup(f.read()).thebibliography.contents))
         bib = parse_bib(bib)
+    return bib
 
-    parsed = parse_document(tex, bib)
-    with open('/tmp/parsed.json', 'w') as f:
-        json.dump(parsed, f, indent=True)
-
-    from jinja2 import Template
-    with open('/home/sash/cite-read/citeread/template.html', 'r') as f:
-        template = Template(f.read())
-
-    with open('/tmp/parsed.html', 'w') as f:
-        f.write(template.render(document=parsed))
+def find_files(directory):
+    tex_files = glob.glob(os.path.join(directory, '*.tex'))
+    bbl_files = glob.glob(os.path.join(directory, '*.bbl'))
+    assert len(bbl_files) == 1, 'Help, found more than one BBL file'
+    bib = bib_from_bbl(bbl_files[0])
+    return tex_files, bib
 
 
+TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>My Webpage</title>
+</head>
+<body>
+    {% for section_title, section_content in document %}
+        <h1>{{ section_title }}</h1>
+        {% for reference, bib_entry, contexts in section_content %}
+            <a id="{{ section_title }}/{{ reference }}"><h2>{{ reference }}</h2></a>
+            <code>{{ bib_entry }}</code>
+            <ul>
+            {% for context in contexts %}
+                <li>{{ context }}</li>
+            {% endfor %}
+            </ul>
+        {% endfor %}
+    {% endfor %}
 
+</body>
+</html>
+"""
+
+def main():
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('directory')
+    parser.add_argument('-s', '--save', default=None)
+    args = parser.parse_args()
+    if not args.save:
+        args.save = os.path.join('/tmp', os.path.basename(args.directory))
+
+    if not os.path.exists(args.save):
+        os.makedirs(args.save)
+
+    template = Template(TEMPLATE)
+    tex_files, bib = find_files(args.directory)
+
+    for tex_file in tex_files:
+        with open(tex_file, 'r') as f:
+            tex = TexSoup(f.read())
+            parsed = parse_document(tex, bib)
+        save_path = os.path.join(args.save, os.path.basename(tex_file).replace('.tex', '.html'))
+        with open(save_path, 'w') as f:
+            f.write(template.render(document=parsed))
 
 if __name__ == '__main__':
     main()
