@@ -2,3 +2,4 @@ TexSoup
 nltk
 termcolor
 pytest
+jinja2

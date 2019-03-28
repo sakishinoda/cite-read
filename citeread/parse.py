@@ -38,31 +38,53 @@ def parse_sentence(sent):
         except AttributeError:  # opening an environment
             continue
         break
+
     return parsed_sent
+
+
+def replace_cites(section, sent):
+    while True:
+        tag = sent.cite
+        if not tag:
+            return str(sent)
+        args = ['<a href="#{0}/{1}">{1}</a>'.format(section.string, a.strip()) for a in tag.string.split(',')]
+        tag.replace('({})'.format(', '.join(args)))
 
 
 def find_named_descendants(soup, name):
     return [e for e in soup.descendants if hasattr(e, 'name')
             and e.name == name]
 
-
 def parse_document(tex_soup, bib_dict):
     sections = partition_on_command(tex_soup, 'section')
-    document_cites = {}
+    document_cites = []
     for section_title, section_text in sections:
         cites = parse_text(section_text)
-        cite_counts = {k: len(v) for k, v in cites.items()}
         print(colored('In section "{}", found:'.format(section_title.string), 'white', 'on_cyan'))
-        for k, v in reversed(sorted(cite_counts.items(), key=lambda x: x[1])):
+        cites_with_bib_entry = []
+        for k, v in cites:
             print('')
-            print(colored('-> Found {} time(s)'.format(v), 'magenta'))
-            print(colored(bib_dict.get(k, 'Not found: {}'.format(k)), 'white', 'on_yellow'))
-            for context in cites[k]:
+            print(colored('-> Found {} time(s)'.format(len(v)), 'magenta'))
+            bib_entry = bib_dict.get(k, 'Not found: {}'.format(k))
+            print(colored(bib_entry, 'white', 'on_yellow'))
+            for context in v:
                 print('-->', colored(context, 'green'))
+            cites_with_bib_entry.append((k, bib_entry, [replace_cites(section_title, s) for s in v]))
         print('-' * 80)
-        document_cites[section_title] = cites
+        document_cites.append((section_title.string, cites_with_bib_entry))
     return document_cites
 
+def count_and_rank_cites(cites):
+    cite_counts = {k: len(v) for k, v in cites.items()}
+    return {key: rank for rank, (key, count) in enumerate(reversed(sorted(cite_counts.items(), key=lambda x: x[1])))}
+
+def sort_keys_by_value_count(d):
+    counts = {k: len(v) for k, v in d.items()}
+    return [k for k, _ in reversed(sorted(counts.items(), key=lambda x: x[1]))]
+
+def convert_to_sorted_list(cites):
+    cite_counts = {k: len(v) for k, v in cites.items()}
+    return [(k, cites[k]) for k, _ in reversed(sorted(cite_counts.items(), key=lambda x: x[1]))]
 
 def parse_text(text):
     purged_text = purge_comments(text.replace('citep', 'cite'))
@@ -77,10 +99,7 @@ def parse_text(text):
         cite_keys = collect_keys_for_context(cites_in_sent)
         for k in cite_keys:
             cites[k].append(parsed_sent)
-
-    # Here map all the keys to numbers so we have a numerical bibliography
-    # Then replace all the cite tags in the contexts with the numerical refs
-    return cites
+    return convert_to_sorted_list(cites)
 
 
 def collect_keys_for_context(cites_in_sent):
@@ -96,13 +115,14 @@ def parse_bib(tex_soup):
     bibitems = partition_on_command(tex_soup, 'bibitem')
     return {b[0].args[-1]: b[1].strip() for b in bibitems}
 
-
 def main():
     import argparse
+    import json
 
     parser = argparse.ArgumentParser()
     parser.add_argument('tex')
     parser.add_argument('bib')
+
     args = parser.parse_args()
 
     with open(args.tex, 'r') as f:
@@ -112,8 +132,17 @@ def main():
         bib = TexSoup(map(str, TexSoup(f.read()).thebibliography.contents))
         bib = parse_bib(bib)
 
+    parsed = parse_document(tex, bib)
+    with open('/tmp/parsed.json', 'w') as f:
+        json.dump(parsed, f, indent=True)
 
-    parse_document(tex, bib)
+    from jinja2 import Template
+    with open('/home/sash/cite-read/citeread/template.html', 'r') as f:
+        template = Template(f.read())
+
+    with open('/tmp/parsed.html', 'w') as f:
+        f.write(template.render(document=parsed))
+
 
 
 

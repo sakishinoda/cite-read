@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>My Webpage</title>
+</head>
+<body>
+    {% for section_title, section_content in document %}
+        <h1>{{ section_title }}</h1>
+        {% for reference, bib_entry, contexts in section_content %}
+            <a id="{{ section_title }}/{{ reference }}"><h2>{{ reference }}</h2></a>
+            <code>{{ bib_entry }}</code>
+            <ul>
+            {% for context in contexts %}
+                <li>{{ context }}</li>
+            {% endfor %}
+            </ul>
+        {% endfor %}
+    {% endfor %}
+
+</body>
+</html>
